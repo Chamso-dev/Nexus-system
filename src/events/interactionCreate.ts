@@ -17,6 +17,7 @@ import { isAppError, toError } from '../utils/errors';
 import { runGuards } from '../middlewares/guards';
 import { errorEmbed } from '../utils/embeds';
 import { metrics } from '../services/metrics.service';
+import { env } from '../config/env';
 
 const log = createLogger('Interaction');
 
@@ -40,6 +41,25 @@ const event: EventModule<typeof Events.InteractionCreate> = {
   async execute(...args: unknown[]) {
     const interaction = args[0] as Interaction;
     const client = interaction.client as NexusClient;
+
+    // Guild allow-list: when RESTRICT_TO_GUILD is on, ignore interactions from
+    // any guild other than the configured ALLOWED_GUILD_ID (DMs still allowed).
+    if (
+      env.RESTRICT_TO_GUILD &&
+      env.DISCORD_DEV_GUILD_ID &&
+      interaction.inGuild() &&
+      interaction.guildId !== env.DISCORD_DEV_GUILD_ID
+    ) {
+      if (interaction.isAutocomplete()) {
+        await interaction.respond([]);
+      } else if (interaction.isRepliable()) {
+        await interaction.reply({
+          content: 'This bot is restricted to its home server.',
+          flags: MessageFlags.Ephemeral,
+        });
+      }
+      return;
+    }
 
     try {
       // ----- Autocomplete -------------------------------------------------

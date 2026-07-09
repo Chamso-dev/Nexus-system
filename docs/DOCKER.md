@@ -64,7 +64,7 @@ Slash commands are registered against Discord's API (not per-container). Run onc
 after deploying:
 
 ```bash
-docker compose exec bot node dist/scripts/deploy-commands.js
+docker compose exec bot node dist/scripts/deploy-commands-global.js
 ```
 
 > Tip: set `DISCORD_DEV_GUILD_ID` for instant updates while testing; leave it

@@ -36,9 +36,15 @@ const envSchema = z.object({
   LOG_LEVEL: z.enum(['error', 'warn', 'info', 'http', 'debug']).default('info'),
 
   // Discord
+  // The bot token — the only truly secret Discord value. Never commit it.
   DISCORD_TOKEN: z.string().min(1, 'DISCORD_TOKEN is required'),
-  DISCORD_CLIENT_ID: z.string().min(1, 'DISCORD_CLIENT_ID is required'),
+  // Application (client) id. Accepts CLIENT_ID as an alias (normalized below).
+  DISCORD_CLIENT_ID: z.string().min(1, 'CLIENT_ID (or DISCORD_CLIENT_ID) is required'),
+  // Guild used for development command registration & (optionally) to scope the
+  // bot to a single private server. Accepts ALLOWED_GUILD_ID as an alias.
   DISCORD_DEV_GUILD_ID: z.string().optional().default(''),
+  // When true, commands are only registered to / usable in DISCORD_DEV_GUILD_ID.
+  RESTRICT_TO_GUILD: booleanFromString(false),
   DISCORD_OWNER_IDS: csv,
 
   // Database / cache
@@ -95,14 +101,35 @@ export type Env = z.infer<typeof envSchema>;
  * Parse & validate the environment. On failure we print a readable report and
  * exit — a misconfigured bot must fail fast rather than start half-broken.
  */
+/**
+ * Normalize author-friendly aliases so both naming conventions work:
+ *   CLIENT_ID         → DISCORD_CLIENT_ID
+ *   ALLOWED_GUILD_ID  → DISCORD_DEV_GUILD_ID (and turns on guild restriction)
+ * The canonical DISCORD_* names always win if both are set.
+ */
+function normalizeAliases(source: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const merged: NodeJS.ProcessEnv = { ...source };
+  merged.DISCORD_CLIENT_ID = merged.DISCORD_CLIENT_ID || merged.CLIENT_ID;
+  merged.DISCORD_DEV_GUILD_ID = merged.DISCORD_DEV_GUILD_ID || merged.ALLOWED_GUILD_ID;
+  // If the operator supplied ALLOWED_GUILD_ID, default to restricting the bot to
+  // it (opt out explicitly with RESTRICT_TO_GUILD=false).
+  if (merged.ALLOWED_GUILD_ID && merged.RESTRICT_TO_GUILD === undefined) {
+    merged.RESTRICT_TO_GUILD = 'true';
+  }
+  return merged;
+}
+
 function loadEnv(): Env {
-  const parsed = envSchema.safeParse(process.env);
+  const parsed = envSchema.safeParse(normalizeAliases(process.env));
   if (!parsed.success) {
     const issues = parsed.error.issues
       .map((issue) => `  • ${issue.path.join('.') || '(root)'}: ${issue.message}`)
       .join('\n');
     // eslint-disable-next-line no-console
-    console.error(`\n❌ Invalid environment configuration:\n${issues}\n`);
+    console.error(
+      `\n❌ Invalid environment configuration — the bot cannot start.\n\n${issues}\n\n` +
+        `Fix these in your .env file (see .env.example) and try again.\n`,
+    );
     process.exit(1);
   }
   return Object.freeze(parsed.data);

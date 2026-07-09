@@ -21,7 +21,7 @@ docker compose up -d --build
    npm ci
    npm run build
    npm run prisma:deploy
-   npm run deploy:commands
+   npm run deploy:commands:global   # global registration for production
    ```
 4. Start under PM2 (config: [`ecosystem.config.js`](../ecosystem.config.js)):
    ```bash
@@ -49,7 +49,7 @@ logs to `logs/`.
    npm ci
    npm run build
    npm run prisma:deploy
-   npm run deploy:commands
+   npm run deploy:commands:global
    npm start
    ```
 3. For a background service, use PM2 (`npm i -g pm2 pm2-windows-startup`) or
@@ -71,7 +71,7 @@ npm ci
 npm run build
 npm run prisma:deploy          # apply any new migrations
 pm2 reload nexus-bot           # or: docker compose up -d --build
-npm run deploy:commands        # only if commands changed
+npm run deploy:commands:global # only if commands changed (production = global)
 ```
 
 ## Production checklist

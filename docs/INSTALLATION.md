@@ -22,7 +22,13 @@ This guide walks you through running Nexus locally from scratch.
    https://discord.com/api/oauth2/authorize?client_id=CLIENT_ID&scope=bot%20applications.commands&permissions=274877959168
    ```
    The permission integer grants *Send Messages*, *Embed Links* and *Use Slash Commands*.
-5. (Optional) For instant command updates during development, copy your test server's ID → `DISCORD_DEV_GUILD_ID`.
+5. Copy your private server's ID (enable Developer Mode → right-click the server →
+   Copy Server ID) → `ALLOWED_GUILD_ID`. In development the bot **auto-registers
+   all slash commands to this guild on startup** and only operates there.
+
+> **Environment variable names.** `CLIENT_ID` and `ALLOWED_GUILD_ID` are the
+> primary names; `DISCORD_CLIENT_ID` / `DISCORD_DEV_GUILD_ID` are accepted as
+> aliases. Set either.
 
 ## 3. Clone & install
 
@@ -55,12 +61,14 @@ npm run prisma:migrate      # apply migrations (creates all tables)
 
 ## 6. Register slash commands
 
-```bash
-npm run deploy:commands
-```
+In **development** you don't need to do anything — the bot **auto-registers all
+commands to `ALLOWED_GUILD_ID` on startup**. To register manually or for
+production:
 
-With `DISCORD_DEV_GUILD_ID` set this is instant; globally it can take up to an
-hour to propagate.
+```bash
+npm run deploy:commands            # guild-scoped (uses ALLOWED_GUILD_ID) — instant
+npm run deploy:commands:global     # global (production) — up to ~1h to propagate
+```
 
 ## 7. Run
 

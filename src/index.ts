@@ -24,6 +24,8 @@ import { startApiServer } from './api/server';
 import { scheduler } from './jobs/scheduler';
 import { jobs } from './jobs';
 import { toError } from './utils/errors';
+import { registerCommands } from './core/commandRegistry';
+import { isProduction } from './config/env';
 
 const log = createLogger('Bootstrap');
 
@@ -39,17 +41,69 @@ async function main(): Promise<void> {
   loadAll(client, __dirname);
   notificationService.bindClient(client);
 
+  log.info('Modules loaded', {
+    commands: client.commands.size,
+    contextMenus: client.contextMenus.size,
+    buttons: client.buttons.size,
+    selectMenus: client.selectMenus.size,
+  });
+
   // 3. HTTP API (starts before login so health checks pass during connect).
   const server = await startApiServer(client);
 
-  // 4. Log in to the Discord gateway.
-  await client.login(env.DISCORD_TOKEN);
+  // 4. Log in to the Discord gateway — exit cleanly if authentication fails.
+  try {
+    await client.login(env.DISCORD_TOKEN);
+  } catch (error) {
+    const message = toError(error).message;
+    log.error(
+      'Discord authentication failed — check DISCORD_TOKEN in your .env. Shutting down.',
+      { message },
+    );
+    server.close();
+    await disconnectRedis().catch(() => undefined);
+    await disconnectDatabase().catch(() => undefined);
+    process.exit(1);
+  }
 
-  // 5. Background scheduler.
+  // 5. Register slash commands.
+  //    - Development: auto-register to the dev/allowed guild for instant updates.
+  //    - Production: skip auto-registration; deploy globally via
+  //      `npm run deploy:commands:global` as a release step.
+  await registerSlashCommands(client);
+
+  // 6. Background scheduler (prices, wallets, gas, news, alerts every minute).
   scheduler.start(jobs);
 
   registerShutdown(client, server);
-  log.info('Nexus is fully operational 🚀');
+  log.info('Nexus is fully operational 🚀', { guilds: client.guilds.cache.size });
+}
+
+/**
+ * Register slash commands appropriately for the environment. Command
+ * registration failures are non-fatal — the bot stays online and the operator
+ * can re-run the deploy script.
+ */
+async function registerSlashCommands(client: NexusClient): Promise<void> {
+  try {
+    if (!isProduction && env.DISCORD_DEV_GUILD_ID) {
+      const count = await registerCommands(client, { guildId: env.DISCORD_DEV_GUILD_ID });
+      log.info(`Auto-registered ${count} commands to guild ${env.DISCORD_DEV_GUILD_ID}`);
+    } else if (isProduction) {
+      log.info(
+        'Production mode: skipping auto-registration. Run `npm run deploy:commands:global` to publish commands.',
+      );
+    } else {
+      log.warn(
+        'No ALLOWED_GUILD_ID/DISCORD_DEV_GUILD_ID set — skipping auto-registration. ' +
+          'Set it to auto-register commands to your server, or run `npm run deploy:commands`.',
+      );
+    }
+  } catch (error) {
+    log.error('Command auto-registration failed (bot stays online)', {
+      message: toError(error).message,
+    });
+  }
 }
 
 /** Wire SIGINT/SIGTERM + unhandled rejections to a clean shutdown. */

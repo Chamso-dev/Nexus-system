@@ -1,46 +1,42 @@
 /**
- * Slash-command deployment script.
+ * Slash-command deployment (development / guild-scoped).
  *
- * Reads every command + context-menu module and registers them with Discord via
- * the REST API. With DISCORD_DEV_GUILD_ID set it deploys to that guild
- * (instant, for development); otherwise it deploys globally (can take up to an
- * hour to propagate).
+ * Loads every command + context-menu module and registers them to the guild in
+ * ALLOWED_GUILD_ID (a.k.a. DISCORD_DEV_GUILD_ID) — instant propagation, ideal
+ * for development. Pass `--global` to force a global deploy instead.
  *
- * Usage: `npm run deploy:commands`
+ * Usage:
+ *   npm run deploy:commands            # guild (uses ALLOWED_GUILD_ID)
+ *   npm run deploy:commands -- --global
  */
-import { REST, Routes } from 'discord.js';
 import path from 'node:path';
-import { env } from '../config/env';
 import { NexusClient } from '../core/NexusClient';
 import { loadCommands, loadContextMenus } from '../core/loaders';
+import { registerCommands } from '../core/commandRegistry';
+import { env } from '../config/env';
 import { createLogger } from '../utils/logger';
 
 const log = createLogger('DeployCommands');
 
 async function deploy(): Promise<void> {
+  const global = process.argv.includes('--global');
+
   // Reuse the loaders to collect command definitions without logging in.
   const client = new NexusClient();
   const base = path.join(__dirname, '..');
   loadCommands(client, base);
   loadContextMenus(client, base);
 
-  const body = [
-    ...client.commands.map((c) => c.data.toJSON()),
-    ...client.contextMenus.map((c) => c.data.toJSON()),
-  ];
-
-  const rest = new REST({ version: '10' }).setToken(env.DISCORD_TOKEN);
-
-  if (env.DISCORD_DEV_GUILD_ID) {
-    await rest.put(
-      Routes.applicationGuildCommands(env.DISCORD_CLIENT_ID, env.DISCORD_DEV_GUILD_ID),
-      { body },
+  if (!global && !env.DISCORD_DEV_GUILD_ID) {
+    log.error(
+      'ALLOWED_GUILD_ID (or DISCORD_DEV_GUILD_ID) is not set. ' +
+        'Set it for a guild deploy, or run with --global for production.',
     );
-    log.info(`Deployed ${body.length} commands to dev guild ${env.DISCORD_DEV_GUILD_ID}`);
-  } else {
-    await rest.put(Routes.applicationCommands(env.DISCORD_CLIENT_ID), { body });
-    log.info(`Deployed ${body.length} commands globally`);
+    process.exit(1);
   }
+
+  const count = await registerCommands(client, { global });
+  log.info(`✅ Deployed ${count} commands ${global ? 'globally' : `to guild ${env.DISCORD_DEV_GUILD_ID}`}`);
 }
 
 deploy()
