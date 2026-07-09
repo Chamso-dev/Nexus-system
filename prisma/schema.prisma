@@ -1,0 +1,367 @@
+// =============================================================================
+// Nexus Crypto Bot — Prisma schema
+// Normalized relational model for users, wallets, alerts, transactions,
+// news subscriptions, portfolios, settings, premium, logs and jobs.
+// =============================================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// -----------------------------------------------------------------------------
+// Enums
+// -----------------------------------------------------------------------------
+
+/// Supported blockchains. Add new chains here and register an adapter.
+enum Chain {
+  BITCOIN
+  ETHEREUM
+  BNB
+  POLYGON
+  SOLANA
+  ARBITRUM
+  OPTIMISM
+  BASE
+  AVALANCHE
+}
+
+enum AlertType {
+  PRICE_ABOVE
+  PRICE_BELOW
+  PERCENT_MOVE
+  VOLUME_SPIKE
+  MARKET_CAP_CHANGE
+  GAS_BELOW
+  WHALE_TRANSFER
+}
+
+enum AlertStatus {
+  ACTIVE
+  TRIGGERED
+  PAUSED
+  EXPIRED
+}
+
+enum TransactionDirection {
+  IN
+  OUT
+  SELF
+  UNKNOWN
+}
+
+enum TransactionKind {
+  TOKEN_TRANSFER
+  NATIVE_TRANSFER
+  NFT_TRANSFER
+  CONTRACT_CALL
+  FAILED
+}
+
+enum NewsCategory {
+  BITCOIN
+  ETHEREUM
+  ALTCOINS
+  DEFI
+  NFT
+  SECURITY
+  REGULATION
+  MARKET
+}
+
+enum PremiumTier {
+  FREE
+  PLUS
+  PRO
+}
+
+enum LogLevel {
+  ERROR
+  WARN
+  INFO
+  DEBUG
+}
+
+enum JobStatus {
+  PENDING
+  RUNNING
+  SUCCESS
+  FAILED
+  RETRYING
+}
+
+// -----------------------------------------------------------------------------
+// Core entities
+// -----------------------------------------------------------------------------
+
+/// A Discord guild (server). Used for per-guild configuration & scale metrics.
+model Guild {
+  id           String   @id // Discord guild snowflake
+  name         String?
+  locale       String   @default("en")
+  premiumTier  PremiumTier @default(FREE)
+  joinedAt     DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  settings     GuildSetting?
+
+  @@map("guilds")
+}
+
+/// Per-guild settings (channel routing, feature toggles).
+model GuildSetting {
+  id                String  @id @default(cuid())
+  guildId           String  @unique
+  guild             Guild   @relation(fields: [guildId], references: [id], onDelete: Cascade)
+  alertChannelId    String?
+  whaleChannelId    String?
+  newsChannelId     String?
+  gasChannelId      String?
+  whaleFeedEnabled  Boolean @default(false)
+  newsFeedEnabled   Boolean @default(false)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@map("guild_settings")
+}
+
+/// A Discord user of the bot. Identity is the Discord snowflake.
+model User {
+  id                 String   @id // Discord user snowflake
+  username           String?
+  locale             String   @default("en")
+  timezone           String   @default("UTC")
+  premiumTier        PremiumTier @default(FREE)
+  premiumUntil       DateTime?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  wallets            Wallet[]
+  alerts             Alert[]
+  portfolios         Portfolio[]
+  newsSubscriptions  NewsSubscription[]
+  settings           UserSetting?
+  watchlistItems     WatchlistItem[]
+
+  @@map("users")
+}
+
+/// Per-user notification & display preferences.
+model UserSetting {
+  id                  String  @id @default(cuid())
+  userId              String  @unique
+  user                User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  dmAlerts            Boolean @default(true)
+  whaleAlerts         Boolean @default(true)
+  priceAlerts         Boolean @default(true)
+  gasAlerts           Boolean @default(true)
+  newsAlerts          Boolean @default(true)
+  defaultCurrency     String  @default("usd")
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  @@map("user_settings")
+}
+
+/// A watched on-chain wallet belonging to a user.
+model Wallet {
+  id             String   @id @default(cuid())
+  userId         String
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  chain          Chain
+  address        String
+  label          String?
+  alertThreshold Decimal  @default(0) @db.Decimal(38, 8) // USD threshold for "large transfer"
+  active         Boolean  @default(true)
+  lastCheckedAt  DateTime?
+  lastCursor     String?  // provider-specific pagination cursor / last block/sig
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  transactions   Transaction[]
+
+  @@unique([userId, chain, address])
+  @@index([chain, active])
+  @@map("wallets")
+}
+
+/// An observed on-chain transaction related to a watched wallet.
+model Transaction {
+  id           String   @id @default(cuid())
+  walletId     String
+  wallet       Wallet   @relation(fields: [walletId], references: [id], onDelete: Cascade)
+  chain        Chain
+  hash         String
+  blockNumber  BigInt?
+  direction    TransactionDirection @default(UNKNOWN)
+  kind         TransactionKind      @default(NATIVE_TRANSFER)
+  fromAddress  String?
+  toAddress    String?
+  assetSymbol  String?
+  amount       Decimal? @db.Decimal(38, 18)
+  usdValue     Decimal? @db.Decimal(38, 8)
+  confirmed    Boolean  @default(false)
+  notified     Boolean  @default(false)
+  timestamp    DateTime @default(now())
+
+  @@unique([walletId, hash, assetSymbol])
+  @@index([chain, timestamp])
+  @@map("transactions")
+}
+
+/// A user-defined alert (price, gas, whale, etc.).
+model Alert {
+  id          String      @id @default(cuid())
+  userId      String
+  user        User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type        AlertType
+  status      AlertStatus @default(ACTIVE)
+  asset       String?     // e.g. "bitcoin", "ethereum", or chain for gas
+  threshold   Decimal?    @db.Decimal(38, 8)
+  comparator  String?     // ">", "<", "%"
+  meta        Json?       // free-form parameters (window, direction, etc.)
+  lastValue   Decimal?    @db.Decimal(38, 8)
+  triggeredAt DateTime?
+  expiresAt   DateTime?
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  @@index([type, status])
+  @@index([userId, status])
+  @@map("alerts")
+}
+
+/// A user portfolio (a named collection of holdings).
+model Portfolio {
+  id          String   @id @default(cuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name        String   @default("Main")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  holdings    Holding[]
+  snapshots   PortfolioSnapshot[]
+
+  @@unique([userId, name])
+  @@map("portfolios")
+}
+
+/// A single asset position inside a portfolio.
+model Holding {
+  id           String    @id @default(cuid())
+  portfolioId  String
+  portfolio    Portfolio @relation(fields: [portfolioId], references: [id], onDelete: Cascade)
+  assetId      String    // provider asset id, e.g. "bitcoin"
+  symbol       String
+  amount       Decimal   @db.Decimal(38, 18)
+  costBasisUsd Decimal?  @db.Decimal(38, 8)
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  @@unique([portfolioId, assetId])
+  @@map("holdings")
+}
+
+/// Point-in-time valuation of a portfolio (for historical performance charts).
+model PortfolioSnapshot {
+  id           String    @id @default(cuid())
+  portfolioId  String
+  portfolio    Portfolio @relation(fields: [portfolioId], references: [id], onDelete: Cascade)
+  totalUsd     Decimal   @db.Decimal(38, 8)
+  takenAt      DateTime  @default(now())
+
+  @@index([portfolioId, takenAt])
+  @@map("portfolio_snapshots")
+}
+
+/// A single item on a user's watchlist.
+model WatchlistItem {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  assetId   String
+  symbol    String
+  createdAt DateTime @default(now())
+
+  @@unique([userId, assetId])
+  @@map("watchlist_items")
+}
+
+/// A per-user subscription to a news category.
+model NewsSubscription {
+  id        String       @id @default(cuid())
+  userId    String
+  user      User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  category  NewsCategory
+  createdAt DateTime     @default(now())
+
+  @@unique([userId, category])
+  @@map("news_subscriptions")
+}
+
+/// Cached news articles (deduped by source URL).
+model NewsArticle {
+  id          String       @id @default(cuid())
+  title       String
+  url         String       @unique
+  source      String?
+  category    NewsCategory @default(MARKET)
+  summary     String?      // AI-generated concise summary
+  publishedAt DateTime     @default(now())
+  createdAt   DateTime     @default(now())
+
+  @@index([category, publishedAt])
+  @@map("news_articles")
+}
+
+/// Tracked airdrops.
+model Airdrop {
+  id           String   @id @default(cuid())
+  project      String
+  chain        Chain?
+  deadline     DateTime?
+  requirements String?
+  estReward    String?
+  status       String   @default("UPCOMING")
+  riskLevel    String   @default("UNKNOWN")
+  officialUrl  String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([status, deadline])
+  @@map("airdrops")
+}
+
+/// Structured application log persisted to the DB (in addition to files).
+model LogEntry {
+  id        String   @id @default(cuid())
+  level     LogLevel
+  message   String
+  context   String?
+  meta      Json?
+  createdAt DateTime @default(now())
+
+  @@index([level, createdAt])
+  @@map("log_entries")
+}
+
+/// Background job execution record (for the scheduler & /admin jobs).
+model JobRun {
+  id          String    @id @default(cuid())
+  name        String
+  status      JobStatus @default(PENDING)
+  attempts    Int       @default(0)
+  lastError   String?
+  startedAt   DateTime?
+  finishedAt  DateTime?
+  durationMs  Int?
+  createdAt   DateTime  @default(now())
+
+  @@index([name, status])
+  @@index([createdAt])
+  @@map("job_runs")
+}
