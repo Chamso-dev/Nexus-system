@@ -105,12 +105,19 @@ export type Env = z.infer<typeof envSchema>;
  * Normalize author-friendly aliases so both naming conventions work:
  *   CLIENT_ID         → DISCORD_CLIENT_ID
  *   ALLOWED_GUILD_ID  → DISCORD_DEV_GUILD_ID (and turns on guild restriction)
- * The canonical DISCORD_* names always win if both are set.
+ *   PORT              → API_PORT (PaaS platforms like Railway/Render/Heroku
+ *                       inject a dynamic PORT the app must bind to)
+ * The canonical names always win if both are set.
  */
 function normalizeAliases(source: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   const merged: NodeJS.ProcessEnv = { ...source };
   merged.DISCORD_CLIENT_ID = merged.DISCORD_CLIENT_ID || merged.CLIENT_ID;
   merged.DISCORD_DEV_GUILD_ID = merged.DISCORD_DEV_GUILD_ID || merged.ALLOWED_GUILD_ID;
+  // Bind the HTTP API to the platform-provided PORT when present. On a PaaS
+  // (Railway/Render/Heroku) PORT is authoritative and must win, so it takes
+  // precedence over any API_PORT; locally PORT is usually unset and API_PORT
+  // (or its default) applies.
+  merged.API_PORT = merged.PORT || merged.API_PORT;
   // If the operator supplied ALLOWED_GUILD_ID, default to restricting the bot to
   // it (opt out explicitly with RESTRICT_TO_GUILD=false).
   if (merged.ALLOWED_GUILD_ID && merged.RESTRICT_TO_GUILD === undefined) {

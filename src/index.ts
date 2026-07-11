@@ -86,12 +86,19 @@ async function main(): Promise<void> {
  */
 async function registerSlashCommands(client: NexusClient): Promise<void> {
   try {
-    if (!isProduction && env.DISCORD_DEV_GUILD_ID) {
+    // Auto-register to the configured guild when it's set and either we're in
+    // development OR the bot is scoped to that single guild (RESTRICT_TO_GUILD).
+    // This makes single-server deployments (e.g. Railway) work out of the box.
+    const shouldGuildRegister =
+      Boolean(env.DISCORD_DEV_GUILD_ID) && (!isProduction || env.RESTRICT_TO_GUILD);
+
+    if (shouldGuildRegister) {
       const count = await registerCommands(client, { guildId: env.DISCORD_DEV_GUILD_ID });
       log.info(`Auto-registered ${count} commands to guild ${env.DISCORD_DEV_GUILD_ID}`);
     } else if (isProduction) {
       log.info(
-        'Production mode: skipping auto-registration. Run `npm run deploy:commands:global` to publish commands.',
+        'Production mode with no scoped guild: skipping auto-registration. ' +
+          'Run `npm run deploy:commands:global` to publish commands globally.',
       );
     } else {
       log.warn(

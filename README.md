@@ -105,6 +105,7 @@ Full diagram & rationale: **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**.
 | [Database Schema](docs/DATABASE.md) | Tables & relationships. |
 | [API](docs/API.md) | REST endpoints & webhooks. |
 | [Docker](docs/DOCKER.md) | Compose stack, images, health checks. |
+| [Railway](docs/RAILWAY.md) | One-click PaaS deploy with Postgres & Redis plugins. |
 | [Deployment](docs/DEPLOYMENT.md) | PM2, VPS, Windows, restart & health. |
 
 ---
